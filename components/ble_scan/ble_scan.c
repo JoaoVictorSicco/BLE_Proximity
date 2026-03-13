@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include "freertos/FreeRTOS.h"
 #include "ble_scan.h"
 #include <string.h>
 #include "host/ble_gap.h"
@@ -9,12 +10,17 @@
 #include "host/ble_hs_adv.h"
 
 static const char *my_device;
+static ble_addr_t address;
+static EventGroupHandle_t scan_event_group;
+
+EventGroupHandle_t ble_scan_get_event_group(void){
+    return scan_event_group;
+}
 
 static int ble_scan_callback(struct ble_gap_event *event, void *arg){
     
     switch(event->type){
         case BLE_GAP_EVENT_DISC: {
-            printf("Dispositivo detectado, RSSI: %d\n", event->disc.rssi);
             struct ble_hs_adv_fields fields;
             int parse_payload;
         
@@ -23,18 +29,14 @@ static int ble_scan_callback(struct ble_gap_event *event, void *arg){
             if(parse_payload != 0){
                 printf("Erro ao processar o pacote adversiting: %d\n", parse_payload);
                 return 0;
-            }
-            if(fields.name != NULL){
-                printf("Nome: %.*s\n", fields.name_len, fields.name);
-            } else {
-                printf("Sem nome\n");
-            }            
+            }         
         
             if(fields.name != NULL && my_device != NULL){
                 printf("Nome: %.*s\n", fields.name_len, fields.name);
                 if(!(strncmp((char *)fields.name, my_device, fields.name_len))){
                     printf("Dispositivo encontrado: %s\n", my_device);
-
+                    address = event->disc.addr;
+                    xEventGroupSetBits(scan_event_group, DEVICE_FOUND_BIT);
                     if(event->disc.rssi > -60) ble_led_toggle(3, 150);                                  // Perto: acima de -60dB                           
                     else if(event->disc.rssi <= -60 && event->disc.rssi >= -80) ble_led_toggle(3, 500); // Médio: entre -60dB e -80dB
                     else if(event->disc.rssi < -80) ble_led_toggle(3, 1000);                             // Longe: abaixo de -80dB
@@ -57,6 +59,8 @@ static void ble_host_task(void *param){
 esp_err_t ble_scan_start(const char *device){
     if(device == NULL) return ESP_ERR_INVALID_ARG;
     my_device = device;
+
+    scan_event_group = xEventGroupCreate();
 
     // 1. Inicializa o stack NimBLE
     esp_err_t ret = nimble_port_init();
@@ -93,4 +97,9 @@ esp_err_t ble_scan_stop(void){
         return ESP_FAIL;
     }
     return ESP_OK;
+}
+
+
+void ble_scan_get_address(ble_addr_t *addr){
+    *addr = address;
 }
